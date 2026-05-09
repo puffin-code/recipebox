@@ -1,4 +1,5 @@
 .env
+.key_dont_commit
 .venv/
 __pycache__/
 *.pyc
@@ -13,6 +14,8 @@ ocr_pages/
 recipe_metadata/
 recipe_ratings.csv
 recipe_review_inventory.csv
+recipe_inventory.csv
+needs_review.csv
 
 # local Streamlit/cache
 .streamlit/
