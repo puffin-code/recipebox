@@ -16,6 +16,7 @@ recipe_ratings.csv
 recipe_review_inventory.csv
 recipe_inventory.csv
 needs_review.csv
+ingestion_failures*.csv
 
 # local Streamlit/cache
 .streamlit/
