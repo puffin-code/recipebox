@@ -184,18 +184,24 @@ def load_recipe_dataframe():
 
 
 def filter_recipe_dataframe(df, search, favorites_only):
-    """Apply the existing title/type/description/ingredient and favorite filters."""
+    """Apply browser text and favorite filters without touching the LLM path."""
     if search:
         s = search.lower()
 
         mask = (
             df["title"].str.lower().str.contains(s, na=False)
             |
+            df["source_image"].astype(str).str.lower().str.contains(s, na=False)
+            |
             df["dish_type"].str.lower().str.contains(s, na=False)
             |
             df["short_description"].str.lower().str.contains(s, na=False)
             |
+            df["semantic_summary"].str.lower().str.contains(s, na=False)
+            |
             df["main_ingredients"].apply(lambda xs: s in " ".join(xs).lower())
+            |
+            df["user_notes"].apply(lambda notes: s in format_user_notes(notes).lower())
         )
 
         filtered = df[mask]
