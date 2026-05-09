@@ -1,0 +1,18 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# raw/private data
+Photos-67/
+uploaded_recipe_images/
+recipe_images_raw/
+
+# generated OCR/metadata/user data
+ocr_pages/
+recipe_metadata/
+recipe_ratings.csv
+recipe_review_inventory.csv
+
+# local Streamlit/cache
+.streamlit/
