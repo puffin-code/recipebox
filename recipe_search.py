@@ -8,6 +8,11 @@ load_dotenv()
 client = OpenAI()
 
 
+def format_tags(tags):
+    """Render list metadata tags for retrieval text."""
+    return ", ".join(tags) if isinstance(tags, list) else ""
+
+
 def cosine_similarity(a, b):
     """Compare two embedding vectors with cosine similarity."""
     a = np.array(a)
@@ -44,6 +49,13 @@ def build_recipe_search_text(row):
         f"Dish type: {row.get('dish_type', '')}",
         f"Main ingredients: {', '.join(row.get('main_ingredients', []))}",
         f"Description: {row.get('short_description', '')}",
+        f"Semantic summary: {row.get('semantic_summary', '')}",
+        f"Vibe tags: {format_tags(row.get('vibe_tags', []))}",
+        f"Season tags: {format_tags(row.get('season_tags', []))}",
+        f"Meal context tags: {format_tags(row.get('meal_context_tags', []))}",
+        f"Effort level: {row.get('effort_level', '')}",
+        f"Served temperature: {row.get('served_temperature', '')}",
+        f"Make ahead potential: {row.get('make_ahead_potential', '')}",
         f"User notes: {format_user_notes(row.get('user_notes', ''))}",
         f"Recipe text: {ocr_text[:2500]}",
     ]
@@ -126,6 +138,13 @@ Title: {row['title']}
 Dish type: {row['dish_type']}
 Main ingredients: {", ".join(row["main_ingredients"])}
 Description: {row["short_description"]}
+Semantic summary: {row.get("semantic_summary", "")}
+Vibe tags: {format_tags(row.get("vibe_tags", []))}
+Season tags: {format_tags(row.get("season_tags", []))}
+Meal context tags: {format_tags(row.get("meal_context_tags", []))}
+Effort level: {row.get("effort_level", "")}
+Served temperature: {row.get("served_temperature", "")}
+Make ahead potential: {row.get("make_ahead_potential", "")}
 User notes: {format_user_notes(row["user_notes"])}
 
 Recipe text excerpt:

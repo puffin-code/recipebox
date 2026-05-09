@@ -6,6 +6,12 @@ import pandas as pd
 RATINGS_CSV = "recipe_ratings.csv"
 
 
+def _list_field(data, key):
+    """Return list metadata fields safely for older JSON or null values."""
+    value = data.get(key, [])
+    return value if isinstance(value, list) else []
+
+
 def load_ocr_text_for_source(source_image):
     """Load OCR text for a recipe image name, returning blank text if missing."""
     ocr_path = Path("ocr_pages") / f"{Path(source_image).stem}.txt"
@@ -110,9 +116,16 @@ def load_metadata(metadata_dir="recipe_metadata"):
             "title_confidence": data.get("title_confidence"),
             "recipe_structure": data.get("recipe_structure", "unknown"),
             "dish_type": data.get("dish_type") or "unknown",
-            "main_ingredients": data.get("main_ingredients", []),
+            "main_ingredients": _list_field(data, "main_ingredients"),
             "short_description": data.get("short_description") or "",
-            "user_notes": data.get("user_notes", []),
+            "semantic_summary": data.get("semantic_summary") or "",
+            "vibe_tags": _list_field(data, "vibe_tags"),
+            "season_tags": _list_field(data, "season_tags"),
+            "meal_context_tags": _list_field(data, "meal_context_tags"),
+            "effort_level": data.get("effort_level") or "unknown",
+            "served_temperature": data.get("served_temperature") or "unknown",
+            "make_ahead_potential": data.get("make_ahead_potential") or "unknown",
+            "user_notes": _list_field(data, "user_notes"),
             "image_path": f"Photos-67/{data.get('source_image')}",
         })
 
