@@ -1,3 +1,4 @@
+import argparse
 import base64
 import csv
 import json
@@ -375,3 +376,54 @@ def process_ocr_pages(
 
     _print_summary(summary)
     return documents
+
+
+def metadata_from_ocr_file(ocr_path, metadata_dir="recipe_metadata", source_image=None):
+    """Regenerate metadata JSON for one OCR text file."""
+    ocr_path = Path(ocr_path)
+    metadata_dir = Path(metadata_dir)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    recipe_text = ocr_path.read_text(encoding="utf-8")
+    source_image = source_image or ocr_path.with_suffix(".jpg").name
+    json_path = metadata_dir / f"{ocr_path.stem}.json"
+
+    metadata = extract_recipe_metadata(
+        recipe_text,
+        source_image=source_image,
+        raw_output_path=metadata_dir / f"{ocr_path.stem}.raw.txt",
+    )
+    metadata["source_image"] = source_image
+    json_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    print(json_path)
+    return json_path
+
+
+def main():
+    parser = argparse.ArgumentParser(description="RecipeBox ingestion utilities.")
+    parser.add_argument(
+        "--metadata-from-ocr",
+        help="Regenerate metadata JSON for one OCR .txt file.",
+    )
+    parser.add_argument("--metadata_dir", default="recipe_metadata")
+    parser.add_argument(
+        "--source_image",
+        help="Optional source_image value for metadata; defaults to OCR filename with .jpg.",
+    )
+
+    args = parser.parse_args()
+
+    if args.metadata_from_ocr:
+        metadata_from_ocr_file(
+            args.metadata_from_ocr,
+            metadata_dir=args.metadata_dir,
+            source_image=args.source_image,
+        )
+        return
+
+    parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

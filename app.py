@@ -174,6 +174,40 @@ def rating_label(row):
     return ""
 
 
+def order_matches_like_recommendations(recommendation, ranked_matches):
+    """Put cards in the same order as the AI recommendation text when possible."""
+    if not recommendation or ranked_matches is None or ranked_matches.empty:
+        return ranked_matches
+
+    recommendation_text = recommendation.lower()
+    matched = []
+    unmatched = []
+
+    for _, row in ranked_matches.iterrows():
+        markers = [
+            str(row.get("record_id", "")),
+            str(row.get("source_image", "")),
+            str(row.get("title", "")),
+        ]
+        positions = [
+            recommendation_text.find(marker.lower())
+            for marker in markers
+            if marker and recommendation_text.find(marker.lower()) >= 0
+        ]
+
+        if positions:
+            matched.append((min(positions), row))
+        else:
+            unmatched.append(row)
+
+    if not matched:
+        return ranked_matches
+
+    ordered_rows = [row for _, row in sorted(matched, key=lambda item: item[0])]
+    ordered_rows.extend(unmatched)
+    return pd.DataFrame(ordered_rows)
+
+
 def render_recipe_card(row, key_prefix="recipe"):
     """Render one browsable recipe card with existing expanders/actions."""
     with st.container(border=True):
@@ -257,19 +291,22 @@ def render_recipe_card(row, key_prefix="recipe"):
                 st.success("Saved!")
 
 
-def render_ranked_matches(ranked_matches):
+def render_ranked_matches(ranked_matches, recommendation=""):
     """Render compact ranked recommendation cards."""
+    ordered_matches = order_matches_like_recommendations(recommendation, ranked_matches)
+
     st.subheader("All ranked matches")
     with st.container(height=430, border=True):
-        for _, row in ranked_matches.iterrows():
+        for display_rank, (_, row) in enumerate(ordered_matches.iterrows(), start=1):
             with st.container(border=True):
                 left, right = st.columns([0.78, 0.22])
                 with left:
-                    st.markdown(f"**{int(row['rank'])}. {row['title']}**")
+                    st.markdown(f"**{display_rank}. {row['title']}**")
                     st.caption(
                         f"Dataset: {row['dataset']} | "
                         f"Page: {row['source_image']} | "
-                        f"Score: {row['score']:.3f}"
+                        f"Score: {row['score']:.3f} | "
+                        f"Semantic rank: {int(row['rank'])}"
                     )
                     summary = recipe_summary(row)
                     if summary:
@@ -366,7 +403,7 @@ def render_recommendation_tab(df):
         st.warning("No matching recipes found.")
 
     if ranked_matches is not None and not ranked_matches.empty:
-        render_ranked_matches(ranked_matches)
+        render_ranked_matches(ranked_matches, recommendation)
 
 
 def render_browse_tab(df, favorites_only):
@@ -376,7 +413,26 @@ def render_browse_tab(df, favorites_only):
         placeholder="Try: aubergine, chickpeas, cozy, lemon, brunch",
         key="browser_search",
     )
-    filtered = filter_recipe_dataframe(df, search, favorites_only)
+    search_mode_label = st.selectbox(
+        "Search mode",
+        options=[
+            "All fields",
+            "Ingredients: broad",
+            "Ingredients: exact",
+        ],
+        index=0,
+        help=(
+            "Use exact ingredient search when you want 'corn' to match corn "
+            "but not corn flour."
+        ),
+    )
+    search_mode = {
+        "All fields": "all",
+        "Ingredients: broad": "ingredients_broad",
+        "Ingredients: exact": "ingredients_exact",
+    }[search_mode_label]
+
+    filtered = filter_recipe_dataframe(df, search, favorites_only, search_mode=search_mode)
 
     st.write(f"Showing **{len(filtered)}** results.")
 

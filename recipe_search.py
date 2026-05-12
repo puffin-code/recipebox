@@ -56,9 +56,13 @@ def expand_query(query):
 def build_recipe_search_text(row, ocr_text=None):
     """Combine metadata and OCR text into one retrieval document."""
     if ocr_text is None:
-        ocr_text = load_ocr_text_for_source(row["source_image"])
+        ocr_text = load_ocr_text_for_source(
+            row["source_image"],
+            row.get("ocr_dir", "ocr_pages"),
+        )
 
     parts = [
+        f"Dataset: {row.get('dataset', '')}",
         f"Title: {row.get('title', '')}",
         f"Dish type: {row.get('dish_type', '')}",
         f"Main ingredients: {', '.join(row.get('main_ingredients', []))}",
@@ -83,7 +87,10 @@ def _recipe_cache_records(df):
     for _, row in df.iterrows():
         search_text = build_recipe_search_text(row)
         records.append({
+            "record_id": row.get("record_id", row["source_image"]),
             "source_image": row["source_image"],
+            "dataset": row.get("dataset", ""),
+            "ocr_dir": row.get("ocr_dir", "ocr_pages"),
             "title": row["title"],
             "search_text": search_text,
             "text_hash": text_hash(search_text),
@@ -102,11 +109,11 @@ def _cache_is_valid(cache, records):
         return False
 
     current = {
-        record["source_image"]: record["text_hash"]
+        record["record_id"]: record["text_hash"]
         for record in records
     }
     cached_hashes = {
-        record.get("source_image"): record.get("text_hash")
+        record.get("record_id", record.get("source_image")): record.get("text_hash")
         for record in cached
     }
     return current == cached_hashes
@@ -147,11 +154,11 @@ def _refresh_recipe_embedding_cache(df, cache_path, force=False):
     records = _recipe_cache_records(df)
     cache = _load_embedding_cache(cache_path)
     cached_by_source = {
-        record.get("source_image"): record
+        record.get("record_id", record.get("source_image")): record
         for record in cache.get("records", [])
     }
 
-    current_sources = {record["source_image"] for record in records}
+    current_sources = {record["record_id"] for record in records}
     stale_sources = set(cached_by_source) - current_sources
     refreshed_records = []
     stats = {
@@ -163,7 +170,7 @@ def _refresh_recipe_embedding_cache(df, cache_path, force=False):
 
     print(f"Refreshing recipe embedding cache: {cache_path}")
     for record in records:
-        cached = cached_by_source.get(record["source_image"])
+        cached = cached_by_source.get(record["record_id"])
         if (
             cached
             and not force
@@ -177,7 +184,7 @@ def _refresh_recipe_embedding_cache(df, cache_path, force=False):
             stats["reused"] += 1
             continue
 
-        print(f"Embedding recipe: {record['source_image']}")
+        print(f"Embedding recipe: {record['record_id']}")
         embedding = client.embeddings.create(
             model=EMBEDDING_MODEL,
             input=record["search_text"],
@@ -243,14 +250,14 @@ def retrieve_ranked_recipes(query, df, top_k=30, cache_path="recipe_embedding_ca
     best = {}
 
     for score, record in all_scores:
-        source = record["source_image"]
+        source = record["record_id"]
 
         if source not in best or score > best[source][0]:
             best[source] = (score, record)
 
     ranked = sorted(best.values(), key=lambda x: x[0], reverse=True)
     rank_by_source = {
-        record["source_image"]: {
+        record["record_id"]: {
             "rank": index,
             "score": score,
         }
@@ -259,7 +266,7 @@ def retrieve_ranked_recipes(query, df, top_k=30, cache_path="recipe_embedding_ca
 
     rows = []
     for _, row in df.iterrows():
-        source = row["source_image"]
+        source = row.get("record_id", row["source_image"])
         if source not in rank_by_source:
             continue
 
@@ -276,6 +283,7 @@ def retrieve_recipe_candidates(user_query, df, top_k=8):
     return [
         {
             "source_image": row["source_image"],
+            "record_id": row.get("record_id", row["source_image"]),
             "title": row["title"],
             "row": row,
             "score": row["score"],
@@ -293,11 +301,12 @@ def recommend_from_cookbook(user_query, ranked_candidates, top_n=6):
 
     for _, row in candidates.iterrows():
         source = row["source_image"]
-        ocr_text = load_ocr_text_for_source(source)
+        ocr_text = load_ocr_text_for_source(source, row.get("ocr_dir", "ocr_pages"))
 
         candidate_blocks.append(
             f"""
 Page: {source}
+Dataset: {row.get("dataset", "")}
 Title: {row['title']}
 Dish type: {row['dish_type']}
 Main ingredients: {", ".join(row["main_ingredients"])}
