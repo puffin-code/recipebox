@@ -1,11 +1,17 @@
 from html import escape
+import hashlib
+import json
+import re
+from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from recipe_ingest import ingest_uploaded_recipe
+from recipe_ingest import extract_recipe_metadata, ingest_uploaded_recipe
 from recipe_search import (
     answer_recipe_question,
+    generate_inspired_recipe,
     recommend_from_cookbook,
     refresh_recipe_embedding_cache,
     retrieve_ranked_recipes,
@@ -38,7 +44,24 @@ DATASETS = [
         "metadata_dir": "recipe_metadata_google",
         "review_csv": "review_queue_google.csv",
     },
+    {
+        "name": "generated",
+        "ocr_dir": "generated_recipes",
+        "metadata_dir": "generated_recipe_metadata",
+    },
 ]
+
+GENERATED_OCR_DIR = "generated_recipes"
+GENERATED_METADATA_DIR = "generated_recipe_metadata"
+DATASETS_KEY = tuple(
+    (
+        dataset["name"],
+        dataset["ocr_dir"],
+        dataset["metadata_dir"],
+        dataset.get("review_csv", ""),
+    )
+    for dataset in DATASETS
+)
 
 
 def add_page_styles():
@@ -128,6 +151,21 @@ def dataframe_cache_key(df):
 def cached_ranked_recipes(query, top_k, df_key, _df):
     """Cache query results across Streamlit reruns."""
     return retrieve_ranked_recipes(query, _df, top_k=top_k)
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def cached_recipe_dataframe(datasets_key):
+    """Cache metadata loading briefly so ordinary UI clicks stay snappy."""
+    datasets = [
+        {
+            "name": name,
+            "ocr_dir": ocr_dir,
+            "metadata_dir": metadata_dir,
+            **({"review_csv": review_csv} if review_csv else {}),
+        }
+        for name, ocr_dir, metadata_dir, review_csv in datasets_key
+    ]
+    return load_recipe_dataframe(datasets)
 
 
 def chip_html(label):
@@ -245,9 +283,13 @@ def render_recipe_card(row, key_prefix="recipe"):
         ocr_path = ocr_path_for_source(row["source_image"], row.get("ocr_dir", "ocr_pages"))
 
         with st.expander("View recipe text"):
-            if ocr_path.exists():
+            load_text_key = f"load_text_{key_prefix}_{row['record_id']}"
+            if st.button("Load recipe text", key=load_text_key):
+                st.session_state[load_text_key] = True
+
+            if st.session_state.get(load_text_key) and ocr_path.exists():
                 st.text(ocr_path.read_text(encoding="utf-8"))
-            else:
+            elif st.session_state.get(load_text_key):
                 st.warning("Recipe text not found.")
 
         with st.expander("Ask about this recipe"):
@@ -289,6 +331,81 @@ def render_recipe_card(row, key_prefix="recipe"):
                     source_image=row["source_image"],
                 )
                 st.success("Saved!")
+
+
+def selected_inspiration_df(df, selected_ids):
+    """Return selected inspiration recipes in UI-selected order."""
+    by_id = {row["record_id"]: row for _, row in df.iterrows()}
+    rows = [by_id[record_id] for record_id in selected_ids if record_id in by_id]
+    return pd.DataFrame(rows)
+
+
+def recipe_option_labels(df):
+    """Build stable labels for Create tab multiselect choices."""
+    return {
+        row["record_id"]: f"{row['title']} ({row['dataset']} | {row['source_image']})"
+        for _, row in df.iterrows()
+    }
+
+
+def combine_selected_ids(*groups):
+    """Merge selected recipe ids while preserving selection order."""
+    selected = []
+    seen = set()
+    for group in groups:
+        for record_id in group:
+            if record_id not in seen:
+                selected.append(record_id)
+                seen.add(record_id)
+    return selected
+
+
+def render_inspiration_preview_card(row):
+    """Render compact inspiration context without action buttons."""
+    with st.container(border=True):
+        st.markdown(f"**{row['title']}**")
+        st.caption(f"{row['dataset']} | {row['source_image']}")
+        summary = recipe_summary(row)
+        if summary:
+            st.write(summary[:260])
+        if row.get("main_ingredients"):
+            render_chips(row["main_ingredients"][:8])
+
+
+def save_generated_recipe(recipe_text, source_hint="generated_recipe"):
+    """Save generated recipe text and metadata into the generated dataset."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = re.sub(r"[^a-z0-9]+", "_", source_hint.lower()).strip("_")[:48] or "recipe"
+    digest = hashlib.sha1(recipe_text.encode("utf-8")).hexdigest()[:8]
+    stem = f"generated_{slug}_{timestamp}_{digest}"
+    source_image = f"{stem}.txt"
+
+    ocr_dir = Path(GENERATED_OCR_DIR)
+    metadata_dir = Path(GENERATED_METADATA_DIR)
+    ocr_dir.mkdir(parents=True, exist_ok=True)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    txt_path = ocr_dir / f"{stem}.txt"
+    json_path = metadata_dir / f"{stem}.json"
+
+    if txt_path.exists() or json_path.exists():
+        raise FileExistsError(f"Generated recipe already exists for {stem}")
+
+    metadata = extract_recipe_metadata(
+        recipe_text,
+        source_image=source_image,
+        raw_output_path=metadata_dir / f"{stem}.raw.txt",
+    )
+    metadata["source_image"] = source_image
+    metadata["dataset"] = "generated"
+    metadata["dish_type"] = metadata.get("dish_type") or "generated"
+    if not isinstance(metadata.get("user_notes"), list):
+        metadata["user_notes"] = []
+    metadata["user_notes"].append("AI-generated recipe")
+    txt_path.write_text(recipe_text, encoding="utf-8")
+    json_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    return txt_path, json_path
 
 
 def render_ranked_matches(ranked_matches, recommendation=""):
@@ -441,7 +558,18 @@ def render_browse_tab(df, favorites_only):
         return
 
     filtered = filtered.sort_values("title")
-    for _, row in filtered.iterrows():
+    max_cards = st.slider(
+        "Cards to show",
+        min_value=10,
+        max_value=100,
+        value=30,
+        step=10,
+        key="browse_card_limit",
+    )
+    if len(filtered) > max_cards:
+        st.caption(f"Showing the first {max_cards} cards. Search more specifically to narrow results.")
+
+    for _, row in filtered.head(max_cards).iterrows():
         render_recipe_card(row, key_prefix="browse")
 
 
@@ -453,9 +581,187 @@ def render_favorites_tab(df):
         st.info("No favorites yet. Recipes become favorites when notes sound enthusiastic or rating is 4+.")
         return
 
-    st.write(f"Showing **{len(favorites)}** favorites.")
-    for _, row in favorites.iterrows():
+    max_cards = st.slider(
+        "Favorite cards to show",
+        min_value=10,
+        max_value=100,
+        value=min(30, max(10, len(favorites))),
+        step=10,
+        key="favorite_card_limit",
+    )
+
+    st.write(f"Showing **{min(len(favorites), max_cards)}** of **{len(favorites)}** favorites.")
+    for _, row in favorites.head(max_cards).iterrows():
         render_recipe_card(row, key_prefix="favorite")
+
+
+def render_create_tab(df):
+    """Render AI recipe creation grounded in selected saved recipes."""
+    st.subheader("Create from your saved cookbook")
+    st.caption(
+        "Generate a new AI recipe idea inspired by recipes you already saved. "
+        "Pick inspiration recipes first, then add what you have and the mood you want."
+    )
+
+    left_col, right_col = st.columns(2)
+    search_selected_ids = []
+    semantic_selected_ids = []
+
+    with left_col:
+        st.markdown("#### Find recipes to inspire it")
+        create_search = st.text_input(
+            "Search saved recipes",
+            placeholder="Try: corn, lentils, bright salad, cozy soup",
+            key="create_search",
+        )
+        if create_search:
+            matches = filter_recipe_dataframe(df, create_search, favorites_only=False).head(12)
+            if matches.empty:
+                st.info("No saved recipes match that search.")
+            else:
+                options = matches["record_id"].tolist()
+                labels = recipe_option_labels(matches)
+                current = [
+                    record_id
+                    for record_id in st.session_state.get("create_search_inspiration_ids", [])
+                    if record_id in options
+                ]
+                st.session_state["create_search_inspiration_ids"] = current
+                search_selected_ids = st.multiselect(
+                    "Choose search results as inspiration",
+                    options=options,
+                    format_func=lambda record_id: labels.get(record_id, record_id),
+                    key="create_search_inspiration_ids",
+                )
+                for _, row in matches.head(6).iterrows():
+                    render_inspiration_preview_card(row)
+
+    with right_col:
+        st.markdown("#### Semantic inspiration search")
+        semantic_prompt = st.text_input(
+            "Retrieve by mood, style, or context",
+            placeholder="Try: bright Ottolenghi-style salads, cozy lentil dinners",
+            key="create_semantic_prompt",
+        )
+        semantic_top_n = st.slider(
+            "Candidates",
+            min_value=3,
+            max_value=12,
+            value=6,
+            key="create_semantic_top_n",
+        )
+        if st.button("Find inspiration candidates"):
+            if semantic_prompt.strip():
+                with st.spinner("Retrieving inspiration candidates..."):
+                    st.session_state["create_semantic_candidates"] = cached_ranked_recipes(
+                        semantic_prompt.strip(),
+                        semantic_top_n,
+                        dataframe_cache_key(df),
+                        df,
+                    )
+            else:
+                st.warning("Enter a semantic inspiration prompt first.")
+
+        candidates = st.session_state.get("create_semantic_candidates")
+        if candidates is not None and not candidates.empty:
+            candidate_options = candidates.head(semantic_top_n)["record_id"].tolist()
+            candidate_labels = recipe_option_labels(candidates.head(semantic_top_n))
+            current = [
+                record_id
+                for record_id in st.session_state.get("create_semantic_inspiration_ids", [])
+                if record_id in candidate_options
+            ]
+            st.session_state["create_semantic_inspiration_ids"] = current
+            semantic_selected_ids = st.multiselect(
+                "Choose retrieved candidates as inspiration",
+                options=candidate_options,
+                format_func=lambda record_id: candidate_labels.get(record_id, record_id),
+                key="create_semantic_inspiration_ids",
+            )
+            for _, row in candidates.head(min(6, semantic_top_n)).iterrows():
+                render_inspiration_preview_card(row)
+
+    st.divider()
+    selected_ids = combine_selected_ids(search_selected_ids, semantic_selected_ids)
+    selected_df = selected_inspiration_df(df, selected_ids)
+
+    st.markdown("#### Selected inspiration recipes")
+    if selected_df.empty:
+        st.info("No inspiration recipes selected yet. Pick recipes above, then click Generate.")
+    else:
+        for _, row in selected_df.iterrows():
+            st.markdown(f"**{row['title']}**")
+            st.caption(f"{row['dataset']} | {row['source_image']}")
+
+    st.divider()
+    st.markdown("#### Shape the new idea")
+
+    ingredients_on_hand = st.text_area(
+        "Ingredients on hand",
+        placeholder="e.g. corn, tomatoes, herbs, Greek yogurt",
+        key="create_ingredients_on_hand",
+    )
+    ingredients_to_use_or_avoid = st.text_area(
+        "Ingredients to use or avoid",
+        placeholder="e.g. use lemons; avoid shellfish; no cilantro",
+        key="create_use_avoid",
+    )
+    desired_mood_or_context = st.text_input(
+        "Desired mood or context",
+        placeholder="e.g. sunny lunch, cozy weeknight, casual dinner with friends",
+        key="create_mood_context",
+    )
+    dietary_constraints = st.text_input(
+        "Dietary constraints",
+        placeholder="e.g. vegetarian, gluten-free, dairy-light",
+        key="create_dietary",
+    )
+    time_effort_preference = st.text_input(
+        "Time / effort preference",
+        placeholder="e.g. under 45 minutes, low effort, impressive but manageable",
+        key="create_effort",
+    )
+
+    can_generate = not selected_df.empty or any([
+        ingredients_on_hand.strip(),
+        desired_mood_or_context.strip(),
+        ingredients_to_use_or_avoid.strip(),
+    ])
+
+    if st.button("Create AI recipe idea", disabled=not can_generate):
+        user_inputs = {
+            "ingredients_on_hand": ingredients_on_hand,
+            "ingredients_to_use_or_avoid": ingredients_to_use_or_avoid,
+            "desired_mood_or_context": desired_mood_or_context,
+            "dietary_constraints": dietary_constraints,
+            "time_effort_preference": time_effort_preference,
+        }
+        with st.spinner("Creating a new recipe idea from your saved inspiration..."):
+            generated_text = generate_inspired_recipe(selected_df, user_inputs)
+        st.session_state["generated_recipe_text"] = generated_text
+
+    generated_text = st.session_state.get("generated_recipe_text", "")
+    if generated_text:
+        st.markdown("#### AI-generated recipe idea")
+        st.warning("This is AI-generated and inspired by your saved recipes, not copied from them.")
+        st.markdown(generated_text)
+
+        if st.button("Save generated recipe"):
+            source_hint = desired_mood_or_context or ingredients_on_hand or "generated_recipe"
+            with st.spinner("Saving generated recipe and extracting metadata..."):
+                txt_path, json_path = save_generated_recipe(generated_text, source_hint)
+                cached_recipe_dataframe.clear()
+                updated_df = cached_recipe_dataframe(DATASETS_KEY)
+                if not show_hidden:
+                    updated_df = updated_df[~updated_df["hide_from_browse"]]
+                stats = refresh_recipe_embedding_cache(updated_df, force=False)
+                cached_ranked_recipes.clear()
+            st.session_state["refresh_search_index_after_upload"] = False
+            st.success(
+                "Saved generated recipe: "
+                f"{txt_path} and {json_path}. "
+                f"Search index refreshed ({stats['generated']} generated)."
+            )
 
 
 def render_add_recipe_tab():
@@ -496,7 +802,7 @@ st.sidebar.header("Filters")
 favorites_only = st.sidebar.checkbox("Favorites only", value=False)
 show_hidden = st.sidebar.checkbox("Show continuation/partial pages", value=False)
 
-df = load_recipe_dataframe(DATASETS)
+df = cached_recipe_dataframe(DATASETS_KEY)
 
 if not show_hidden:
     df = df[~df["hide_from_browse"]]
@@ -504,6 +810,8 @@ if not show_hidden:
 st.sidebar.header("Search index")
 
 if st.session_state.pop("refresh_search_index_after_upload", False):
+    cached_recipe_dataframe.clear()
+    df = cached_recipe_dataframe(DATASETS_KEY)
     with st.sidebar.status("Refreshing search index...", expanded=False):
         stats = refresh_recipe_embedding_cache(df, force=False)
         cached_ranked_recipes.clear()
@@ -558,21 +866,28 @@ st.caption(
     + ", ".join(f"{name} ({count})" for name, count in dataset_counts.items())
 )
 
-ask_tab, browse_tab, favorites_tab, add_tab = st.tabs([
-    "Ask Cookbook",
-    "Browse",
-    "Favorites",
-    "Add Recipe",
-])
+section = st.radio(
+    "Section",
+    options=[
+        "Ask Cookbook",
+        "Browse",
+        "Create",
+        "Favorites",
+        "Add Recipe",
+    ],
+    horizontal=True,
+    label_visibility="collapsed",
+)
 
-with ask_tab:
+# Streamlit tabs eagerly render every tab body. A single active section keeps
+# ordinary clicks from rebuilding hundreds of hidden recipe cards.
+if section == "Ask Cookbook":
     render_recommendation_tab(df)
-
-with browse_tab:
+elif section == "Browse":
     render_browse_tab(df, favorites_only)
-
-with favorites_tab:
+elif section == "Create":
+    render_create_tab(df)
+elif section == "Favorites":
     render_favorites_tab(df)
-
-with add_tab:
+else:
     render_add_recipe_tab()

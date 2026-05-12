@@ -351,6 +351,72 @@ Recipe text excerpt:
     return response.choices[0].message.content
 
 
+def generate_inspired_recipe(inspiration_rows, user_inputs):
+    """Generate a new recipe idea grounded in selected saved recipes."""
+    inspiration_blocks = []
+
+    for _, row in inspiration_rows.iterrows():
+        ocr_text = load_ocr_text_for_source(
+            row["source_image"],
+            row.get("ocr_dir", "ocr_pages"),
+        )
+        inspiration_blocks.append(
+            f"""
+Title: {row['title']}
+Page: {row['source_image']}
+Dataset: {row.get('dataset', '')}
+Dish type: {row.get('dish_type', '')}
+Main ingredients: {", ".join(row.get("main_ingredients", []))}
+Description: {row.get("short_description", "")}
+Semantic summary: {row.get("semantic_summary", "")}
+Vibe tags: {format_tags(row.get("vibe_tags", []))}
+Season tags: {format_tags(row.get("season_tags", []))}
+Meal context tags: {format_tags(row.get("meal_context_tags", []))}
+User notes: {format_user_notes(row.get("user_notes", []))}
+
+OCR excerpt:
+{ocr_text[:1800]}
+"""
+        )
+
+    context = "\n\n---\n\n".join(inspiration_blocks) or "No saved recipes selected."
+    prompt = "\n".join([
+        f"Ingredients on hand: {user_inputs.get('ingredients_on_hand', '')}",
+        f"Ingredients to use or avoid: {user_inputs.get('ingredients_to_use_or_avoid', '')}",
+        f"Desired mood or context: {user_inputs.get('desired_mood_or_context', '')}",
+        f"Dietary constraints: {user_inputs.get('dietary_constraints', '')}",
+        f"Time/effort preference: {user_inputs.get('time_effort_preference', '')}",
+    ])
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You create new recipe ideas inspired by the user's saved cookbook. "
+                    "Do not copy any provided recipe verbatim. "
+                    "Use inspiration patterns such as flavor direction, technique, texture, "
+                    "mood, structure, and serving context. "
+                    "Clearly label the result as AI-generated. "
+                    "Return markdown with: title, short description, ingredients, steps, "
+                    "prep-ahead notes when useful, and why it fits the inspiration set."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Saved recipe inspiration:\n{context}\n\n"
+                    f"User constraints and request:\n{prompt}\n\n"
+                    "Generate one new recipe that feels compatible with this inspiration set."
+                ),
+            },
+        ],
+    )
+
+    return response.choices[0].message.content
+
+
 def answer_recipe_question(recipe_text, question):
     """Answer one-off questions about a single OCR recipe."""
     response = client.chat.completions.create(
