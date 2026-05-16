@@ -29,6 +29,7 @@ SEARCH_STOPWORDS = {
     "to",
     "with",
 }
+NEGATIVE_PREFIXES = ("no", "without", "avoid", "exclude")
 
 
 def _list_field(data, key):
@@ -133,6 +134,63 @@ def _search_tokens(text):
         elif token.endswith("s") and len(token) > 3:
             tokens.append(token[:-1])
     return tokens
+
+
+def parse_search_query(search):
+    """Split a query into positive text plus explicit exclusion terms."""
+    query = str(search or "").strip()
+    if not query:
+        return "", []
+
+    prefix_pattern = "|".join(NEGATIVE_PREFIXES)
+    clause_pattern = re.compile(
+        rf"\b(?:{prefix_pattern})\s+(.+?)"
+        rf"(?=(?:\s*[,;]\s*|\s+\b(?:{prefix_pattern})\b|$))",
+        flags=re.IGNORECASE,
+    )
+
+    excluded_terms = []
+    for match in clause_pattern.finditer(query):
+        clause = re.sub(r"\s+", " ", match.group(1)).strip(" ,;")
+        clause = re.sub(r"\b(?:and|or)$", "", clause, flags=re.IGNORECASE).strip()
+        for term in re.split(r"\s+(?:and|or)\s+|[,;]", clause, flags=re.IGNORECASE):
+            normalized = term.strip()
+            if normalized:
+                excluded_terms.append(normalized)
+
+    positive_query = clause_pattern.sub(" ", query)
+    positive_query = re.sub(r"\s+", " ", positive_query).strip(" ,;")
+    return positive_query, excluded_terms
+
+
+def text_contains_search_term(text, term):
+    """Match whole terms with light plural handling, avoiding partial words."""
+    text_tokens = set(_search_tokens(text))
+    term_words = re.findall(r"[a-z0-9]+", str(term).lower())
+    term_groups = [
+        set(_search_tokens(word))
+        for word in term_words
+        if set(_search_tokens(word))
+    ]
+    return bool(text_tokens and term_groups) and all(
+        variants & text_tokens
+        for variants in term_groups
+    )
+
+
+def row_search_text(row):
+    """Build the metadata-only text used by browse filtering."""
+    return " ".join([
+        str(row.get("title", "")),
+        str(row.get("source_image", "")),
+        str(row.get("record_id", "")),
+        str(row.get("dataset", "")),
+        str(row.get("dish_type", "")),
+        str(row.get("short_description", "")),
+        str(row.get("semantic_summary", "")),
+        _format_list_field(row.get("main_ingredients", [])),
+        format_user_notes(row.get("user_notes", [])),
+    ])
 
 
 def _ingredient_match(ingredients, search):
@@ -340,15 +398,17 @@ def load_recipe_dataframe(datasets=None):
 
 def filter_recipe_dataframe(df, search, favorites_only, search_mode="all"):
     """Apply browser text and favorite filters without touching the LLM path."""
-    if search:
-        s = search.lower()
+    positive_search, excluded_terms = parse_search_query(search)
+
+    if positive_search:
+        s = positive_search.lower()
         ingredient_matcher = (
             _exact_ingredient_match
             if search_mode == "ingredients_exact"
             else _ingredient_match
         )
         ingredient_mask = df["main_ingredients"].apply(
-            lambda ingredients: ingredient_matcher(ingredients, search)
+            lambda ingredients: ingredient_matcher(ingredients, positive_search)
         )
 
         if search_mode in {"ingredients_broad", "ingredients_exact"}:
@@ -377,6 +437,17 @@ def filter_recipe_dataframe(df, search, favorites_only, search_mode="all"):
         filtered = df[mask]
     else:
         filtered = df
+
+    if excluded_terms:
+        # Negative clauses are hard filters, not positive search words.
+        excluded_mask = filtered.apply(
+            lambda row: any(
+                text_contains_search_term(row_search_text(row), term)
+                for term in excluded_terms
+            ),
+            axis=1,
+        )
+        filtered = filtered[~excluded_mask]
 
     if favorites_only:
         filtered = filtered[filtered["favorite"]]

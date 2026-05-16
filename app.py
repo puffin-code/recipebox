@@ -283,13 +283,14 @@ def render_recipe_card(row, key_prefix="recipe"):
         ocr_path = ocr_path_for_source(row["source_image"], row.get("ocr_dir", "ocr_pages"))
 
         with st.expander("View recipe text"):
-            load_text_key = f"load_text_{key_prefix}_{row['record_id']}"
-            if st.button("Load recipe text", key=load_text_key):
-                st.session_state[load_text_key] = True
+            button_key = f"load_text_button_{key_prefix}_{row['record_id']}"
+            loaded_state_key = f"load_text_loaded_{key_prefix}_{row['record_id']}"
+            if st.button("Load recipe text", key=button_key):
+                st.session_state[loaded_state_key] = True
 
-            if st.session_state.get(load_text_key) and ocr_path.exists():
+            if st.session_state.get(loaded_state_key) and ocr_path.exists():
                 st.text(ocr_path.read_text(encoding="utf-8"))
-            elif st.session_state.get(load_text_key):
+            elif st.session_state.get(loaded_state_key):
                 st.warning("Recipe text not found.")
 
         with st.expander("Ask about this recipe"):
@@ -408,31 +409,33 @@ def save_generated_recipe(recipe_text, source_hint="generated_recipe"):
     return txt_path, json_path
 
 
-def render_ranked_matches(ranked_matches, recommendation=""):
+def render_ranked_matches(ranked_matches, recommendation="", display_limit=6):
     """Render compact ranked recommendation cards."""
     ordered_matches = order_matches_like_recommendations(recommendation, ranked_matches)
+    visible_matches = ordered_matches.head(display_limit)
 
-    st.subheader("All ranked matches")
-    with st.container(height=430, border=True):
-        for display_rank, (_, row) in enumerate(ordered_matches.iterrows(), start=1):
-            with st.container(border=True):
-                left, right = st.columns([0.78, 0.22])
-                with left:
-                    st.markdown(f"**{display_rank}. {row['title']}**")
-                    st.caption(
-                        f"Dataset: {row['dataset']} | "
-                        f"Page: {row['source_image']} | "
-                        f"Score: {row['score']:.3f} | "
-                        f"Semantic rank: {int(row['rank'])}"
-                    )
-                    summary = recipe_summary(row)
-                    if summary:
-                        st.write(summary)
-                    render_chips(metadata_tags(row) + row.get("vibe_tags", [])[:3])
-                with right:
-                    if st.button("View Recipe", key=f"view_ranked_{row['record_id']}"):
-                        st.session_state["browser_search"] = row["record_id"]
-                        st.rerun()
+    st.subheader("Matching recipe cards")
+    st.caption(f"Showing {len(visible_matches)} cards. Use View Recipe to open one in Browse.")
+    for display_rank, (_, row) in enumerate(visible_matches.iterrows(), start=1):
+        with st.container(border=True):
+            left, right = st.columns([0.78, 0.22])
+            with left:
+                st.markdown(f"**{display_rank}. {row['title']}**")
+                st.caption(
+                    f"Dataset: {row['dataset']} | "
+                    f"Page: {row['source_image']} | "
+                    f"Score: {row['score']:.3f} | "
+                    f"Semantic rank: {int(row['rank'])}"
+                )
+                summary = recipe_summary(row)
+                if summary:
+                    st.write(summary)
+                render_chips(metadata_tags(row) + row.get("vibe_tags", [])[:3])
+            with right:
+                if st.button("View Recipe", key=f"view_ranked_{row['record_id']}"):
+                    st.session_state["browser_search"] = row["record_id"]
+                    st.session_state["pending_section"] = "Browse"
+                    st.rerun()
 
 
 def render_recommendation_tab(df):
@@ -520,7 +523,11 @@ def render_recommendation_tab(df):
         st.warning("No matching recipes found.")
 
     if ranked_matches is not None and not ranked_matches.empty:
-        render_ranked_matches(ranked_matches, recommendation)
+        render_ranked_matches(
+            ranked_matches,
+            recommendation,
+            display_limit=last_recommendation.get("top_n", 6),
+        )
 
 
 def render_browse_tab(df, favorites_only):
@@ -866,6 +873,9 @@ st.caption(
     + ", ".join(f"{name} ({count})" for name, count in dataset_counts.items())
 )
 
+if "pending_section" in st.session_state:
+    st.session_state["active_section"] = st.session_state.pop("pending_section")
+
 section = st.radio(
     "Section",
     options=[
@@ -877,6 +887,7 @@ section = st.radio(
     ],
     horizontal=True,
     label_visibility="collapsed",
+    key="active_section",
 )
 
 # Streamlit tabs eagerly render every tab body. A single active section keeps

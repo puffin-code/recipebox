@@ -7,7 +7,12 @@ import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from recipe_storage import format_user_notes, load_ocr_text_for_source
+from recipe_storage import (
+    format_user_notes,
+    load_ocr_text_for_source,
+    parse_search_query,
+    text_contains_search_term,
+)
 
 load_dotenv()
 client = OpenAI()
@@ -232,7 +237,23 @@ def retrieve_ranked_recipes(query, df, top_k=30, cache_path="recipe_embedding_ca
     if not recipe_embeddings:
         return pd.DataFrame()
 
-    expanded_queries = [query] + expand_query(query)
+    positive_query, excluded_terms = parse_search_query(query)
+    if excluded_terms:
+        recipe_embeddings = [
+            record for record in recipe_embeddings
+            if not any(
+                text_contains_search_term(record["search_text"], term)
+                for term in excluded_terms
+            )
+        ]
+    if not recipe_embeddings:
+        return pd.DataFrame()
+
+    # Keep negative clauses out of embeddings; they are enforced as hard filters.
+    scoring_query = positive_query or "recipes"
+    expanded_queries = [scoring_query]
+    if positive_query:
+        expanded_queries.extend(expand_query(scoring_query))
 
     all_scores = []
 
