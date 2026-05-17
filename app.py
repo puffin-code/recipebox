@@ -78,7 +78,7 @@ def require_authenticated_reader():
         st.title("RecipeBox")
         st.write("Sign in to open the private cookbook.")
         if st.button("Sign in with Google"):
-            st.login("google")
+            st.login()
         st.stop()
 
     email = current_user_email()

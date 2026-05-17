@@ -32,6 +32,28 @@ SEARCH_STOPWORDS = {
     "with",
 }
 NEGATIVE_PREFIXES = ("no", "without", "avoid", "exclude")
+METADATA_COLUMNS = [
+    "dataset",
+    "ocr_dir",
+    "metadata_dir",
+    "record_id",
+    "source_image",
+    "title",
+    "title_confidence",
+    "recipe_structure",
+    "dish_type",
+    "main_ingredients",
+    "short_description",
+    "semantic_summary",
+    "vibe_tags",
+    "season_tags",
+    "meal_context_tags",
+    "effort_level",
+    "served_temperature",
+    "make_ahead_potential",
+    "user_notes",
+    "image_path",
+]
 
 
 def _list_field(data, key):
@@ -301,7 +323,7 @@ def load_metadata(
             "image_path": "",
         })
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=METADATA_COLUMNS)
 
 
 def load_review_notes(
