@@ -13,6 +13,7 @@ from recipe_storage import (
     parse_search_query,
     text_contains_search_term,
 )
+from recipe_config import data_path, dataset_path
 
 load_dotenv()
 client = OpenAI()
@@ -63,7 +64,7 @@ def build_recipe_search_text(row, ocr_text=None):
     if ocr_text is None:
         ocr_text = load_ocr_text_for_source(
             row["source_image"],
-            row.get("ocr_dir", "ocr_pages"),
+            row.get("ocr_dir", dataset_path("ocr_pages")),
         )
 
     parts = [
@@ -95,7 +96,7 @@ def _recipe_cache_records(df):
             "record_id": row.get("record_id", row["source_image"]),
             "source_image": row["source_image"],
             "dataset": row.get("dataset", ""),
-            "ocr_dir": row.get("ocr_dir", "ocr_pages"),
+            "ocr_dir": row.get("ocr_dir", dataset_path("ocr_pages")),
             "title": row["title"],
             "search_text": search_text,
             "text_hash": text_hash(search_text),
@@ -211,13 +212,21 @@ def _refresh_recipe_embedding_cache(df, cache_path, force=False):
     return refreshed_records, stats
 
 
-def refresh_recipe_embedding_cache(df, cache_path="recipe_embedding_cache.pkl", force=False):
+def refresh_recipe_embedding_cache(
+    df,
+    cache_path=data_path("recipe_embedding_cache.pkl"),
+    force=False,
+):
     """Incrementally refresh recipe embeddings and return summary stats."""
     _, stats = _refresh_recipe_embedding_cache(df, cache_path, force=force)
     return stats
 
 
-def build_or_load_recipe_embeddings(df, cache_path="recipe_embedding_cache.pkl", force=False):
+def build_or_load_recipe_embeddings(
+    df,
+    cache_path=data_path("recipe_embedding_cache.pkl"),
+    force=False,
+):
     """Load cached embeddings, incrementally generating missing or stale rows."""
     records = _recipe_cache_records(df)
     cache_path = Path(cache_path)
@@ -231,7 +240,12 @@ def build_or_load_recipe_embeddings(df, cache_path="recipe_embedding_cache.pkl",
     return refreshed_records
 
 
-def retrieve_ranked_recipes(query, df, top_k=30, cache_path="recipe_embedding_cache.pkl"):
+def retrieve_ranked_recipes(
+    query,
+    df,
+    top_k=30,
+    cache_path=data_path("recipe_embedding_cache.pkl"),
+):
     """Rank recipes with cached page embeddings and query-time local scoring."""
     recipe_embeddings = build_or_load_recipe_embeddings(df, cache_path=cache_path)
     if not recipe_embeddings:
@@ -322,7 +336,10 @@ def recommend_from_cookbook(user_query, ranked_candidates, top_n=6):
 
     for _, row in candidates.iterrows():
         source = row["source_image"]
-        ocr_text = load_ocr_text_for_source(source, row.get("ocr_dir", "ocr_pages"))
+        ocr_text = load_ocr_text_for_source(
+            source,
+            row.get("ocr_dir", dataset_path("ocr_pages")),
+        )
 
         candidate_blocks.append(
             f"""
@@ -379,7 +396,7 @@ def generate_inspired_recipe(inspiration_rows, user_inputs):
     for _, row in inspiration_rows.iterrows():
         ocr_text = load_ocr_text_for_source(
             row["source_image"],
-            row.get("ocr_dir", "ocr_pages"),
+            row.get("ocr_dir", dataset_path("ocr_pages")),
         )
         inspiration_blocks.append(
             f"""

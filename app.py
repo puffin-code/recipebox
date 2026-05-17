@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from recipe_config import dataset_path
 from recipe_ingest import extract_recipe_metadata, ingest_uploaded_recipe
 from recipe_search import (
     answer_recipe_question,
@@ -34,25 +35,25 @@ st.set_page_config(
 DATASETS = [
     {
         "name": "original",
-        "ocr_dir": "ocr_pages",
-        "metadata_dir": "recipe_metadata",
-        "review_csv": "recipe_review_inventory.csv",
+        "ocr_dir": dataset_path("ocr_pages"),
+        "metadata_dir": dataset_path("recipe_metadata"),
+        "review_csv": dataset_path("recipe_review_inventory.csv"),
     },
     {
         "name": "google",
-        "ocr_dir": "ocr_pages_google",
-        "metadata_dir": "recipe_metadata_google",
-        "review_csv": "review_queue_google.csv",
+        "ocr_dir": dataset_path("ocr_pages_google"),
+        "metadata_dir": dataset_path("recipe_metadata_google"),
+        "review_csv": dataset_path("review_queue_google.csv"),
     },
     {
         "name": "generated",
-        "ocr_dir": "generated_recipes",
-        "metadata_dir": "generated_recipe_metadata",
+        "ocr_dir": dataset_path("generated_recipes"),
+        "metadata_dir": dataset_path("generated_recipe_metadata"),
     },
 ]
 
-GENERATED_OCR_DIR = "generated_recipes"
-GENERATED_METADATA_DIR = "generated_recipe_metadata"
+GENERATED_OCR_DIR = dataset_path("generated_recipes")
+GENERATED_METADATA_DIR = dataset_path("generated_recipe_metadata")
 DATASETS_KEY = tuple(
     (
         dataset["name"],
@@ -280,7 +281,10 @@ def render_recipe_card(row, key_prefix="recipe"):
         if notes:
             st.markdown(f"<div class='soft-note'>Saved note: {notes}</div>", unsafe_allow_html=True)
 
-        ocr_path = ocr_path_for_source(row["source_image"], row.get("ocr_dir", "ocr_pages"))
+        ocr_path = ocr_path_for_source(
+            row["source_image"],
+            row.get("ocr_dir", dataset_path("ocr_pages")),
+        )
 
         with st.expander("View recipe text"):
             button_key = f"load_text_button_{key_prefix}_{row['record_id']}"

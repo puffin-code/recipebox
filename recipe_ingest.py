@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from tqdm import tqdm
 
+from recipe_config import data_path, dataset_path
+
 load_dotenv()
 client = OpenAI()
 
@@ -197,7 +199,7 @@ def extract_recipe_metadata(recipe_text, source_image=None, raw_output_path=None
 
 def ingest_uploaded_recipe(image_bytes, image_name):
     """Save an upload, OCR it, extract metadata, and persist generated files."""
-    upload_dir = Path("uploaded_recipe_images")
+    upload_dir = data_path("uploaded_recipe_images")
     upload_dir.mkdir(exist_ok=True)
 
     image_path = upload_dir / image_name
@@ -205,7 +207,7 @@ def ingest_uploaded_recipe(image_bytes, image_name):
 
     recipe_text = ocr_image(image_path)
 
-    ocr_dir = Path("ocr_pages")
+    ocr_dir = data_path("ocr_pages")
     ocr_dir.mkdir(exist_ok=True)
 
     txt_path = ocr_dir / f"{image_path.stem}.txt"
@@ -213,7 +215,7 @@ def ingest_uploaded_recipe(image_bytes, image_name):
 
     metadata = extract_recipe_metadata(recipe_text, source_image=image_name)
 
-    metadata_dir = Path("recipe_metadata")
+    metadata_dir = data_path("recipe_metadata")
     metadata_dir.mkdir(exist_ok=True)
 
     json_path = metadata_dir / f"{image_path.stem}.json"
@@ -227,8 +229,8 @@ def ingest_uploaded_recipe(image_bytes, image_name):
 
 def process_recipe_images(
     image_dir,
-    ocr_dir="ocr_pages",
-    metadata_dir="recipe_metadata",
+    ocr_dir=dataset_path("ocr_pages"),
+    metadata_dir=dataset_path("recipe_metadata"),
     failure_log_path="ingestion_failures.csv",
     limit=5,
     force=False,
@@ -306,8 +308,8 @@ def process_recipe_images(
 
 
 def process_ocr_pages(
-    ocr_dir="ocr_pages",
-    metadata_dir="recipe_metadata",
+    ocr_dir=dataset_path("ocr_pages"),
+    metadata_dir=dataset_path("recipe_metadata"),
     failure_log_path="ingestion_failures.csv",
     limit=None,
     force=False,
@@ -378,7 +380,11 @@ def process_ocr_pages(
     return documents
 
 
-def metadata_from_ocr_file(ocr_path, metadata_dir="recipe_metadata", source_image=None):
+def metadata_from_ocr_file(
+    ocr_path,
+    metadata_dir=dataset_path("recipe_metadata"),
+    source_image=None,
+):
     """Regenerate metadata JSON for one OCR text file."""
     ocr_path = Path(ocr_path)
     metadata_dir = Path(metadata_dir)

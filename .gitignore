@@ -3,6 +3,7 @@
 .venv/
 __pycache__/
 *.pyc
+*.raw.txt
 
 # raw/private data
 Photos-67/
@@ -12,12 +13,25 @@ recipe_images_raw/
 # generated OCR/metadata/user data
 ocr_pages/
 ocr_pages_google/
+ocr_pages*/
 recipe_metadata/
 recipe_metadata_google/
+recipe_metadata*/
+generated_recipes/
+generated_recipe_metadata/
 recipe_ratings.csv
 recipe_review_inventory.csv
+recipe_review_inventory*.csv
+review_queue*.csv
+review_ocr_texts*/
+duplicate_candidates*.csv
+cleanup_plan*.csv
+archive_duplicates/
+curation_plan*.csv
+archive_curation/
 recipe_inventory.csv
 needs_review.csv
+assembly_proposals*.csv
 ingestion_failures*.csv
 recipe_embedding_cache*.pkl
 *.embedding_cache.pkl

@@ -4,13 +4,15 @@ from pathlib import Path
 
 import pandas as pd
 
-RATINGS_CSV = "recipe_ratings.csv"
+from recipe_config import data_path, dataset_path
+
+RATINGS_CSV = data_path("recipe_ratings.csv")
 DEFAULT_DATASETS = [
     {
         "name": "original",
-        "ocr_dir": "ocr_pages",
-        "metadata_dir": "recipe_metadata",
-        "review_csv": "recipe_review_inventory.csv",
+        "ocr_dir": dataset_path("ocr_pages"),
+        "metadata_dir": dataset_path("recipe_metadata"),
+        "review_csv": dataset_path("recipe_review_inventory.csv"),
     }
 ]
 
@@ -45,7 +47,7 @@ def record_id_for(dataset, source_image):
     return f"{dataset}:{source_image}"
 
 
-def load_ocr_text_for_source(source_image, ocr_dir="ocr_pages"):
+def load_ocr_text_for_source(source_image, ocr_dir=dataset_path("ocr_pages")):
     """Load OCR text for a recipe image name, returning blank text if missing."""
     ocr_path = Path(ocr_dir) / f"{Path(source_image).stem}.txt"
 
@@ -55,7 +57,7 @@ def load_ocr_text_for_source(source_image, ocr_dir="ocr_pages"):
     return ""
 
 
-def ocr_path_for_source(source_image, ocr_dir="ocr_pages"):
+def ocr_path_for_source(source_image, ocr_dir=dataset_path("ocr_pages")):
     """Return the expected OCR text path for a recipe image name."""
     return Path(ocr_dir) / f"{Path(source_image).stem}.txt"
 
@@ -264,7 +266,11 @@ def load_ratings():
     return ratings_df[["record_id", "source_image", "rating", "personal_notes"]]
 
 
-def load_metadata(metadata_dir="recipe_metadata", dataset="original", ocr_dir="ocr_pages"):
+def load_metadata(
+    metadata_dir=dataset_path("recipe_metadata"),
+    dataset="original",
+    ocr_dir=dataset_path("ocr_pages"),
+):
     """Load generated metadata JSON files into a recipe dataframe."""
     rows = []
 
@@ -298,7 +304,10 @@ def load_metadata(metadata_dir="recipe_metadata", dataset="original", ocr_dir="o
     return pd.DataFrame(rows)
 
 
-def load_review_notes(review_csv="recipe_review_inventory.csv", dataset="original"):
+def load_review_notes(
+    review_csv=dataset_path("recipe_review_inventory.csv"),
+    dataset="original",
+):
     """Load manual review notes when present."""
     path = Path(review_csv)
 
