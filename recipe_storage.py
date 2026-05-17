@@ -297,6 +297,8 @@ def load_metadata(
     rows = []
 
     for path in sorted(Path(metadata_dir).glob("*.json")):
+        if path.name.startswith("._"):
+            continue
         data = json.loads(path.read_text(encoding="utf-8"))
         source_image = data.get("source_image") or path.stem
 
