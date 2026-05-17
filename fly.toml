@@ -1,5 +1,5 @@
 app = "payalsrecipes"
-primary_region = "sea"
+primary_region = "yyz"
 
 [build]
   dockerfile = "Dockerfile"
