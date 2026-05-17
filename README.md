@@ -95,6 +95,10 @@ streamlit run app.py
 
 The app runs locally. Use the sidebar to upload recipe images, refresh the search index, or rebuild it from scratch. The **Create** tab lets you select saved recipes as inspiration, generate a clearly labeled AI recipe idea, and save it into the generated recipes dataset.
 
+## Deployment
+
+Pushes to `main` deploy the app to Fly.io through GitHub Actions.
+
 ## Ingesting Recipes
 
 Run a small test batch first:
