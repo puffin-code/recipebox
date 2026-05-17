@@ -1,0 +1,20 @@
+app = "payalsrecipes"
+primary_region = "sea"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  RECIPEBOX_DATA_ROOT = "/data"
+
+[mounts]
+  source = "recipebox_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8501
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
