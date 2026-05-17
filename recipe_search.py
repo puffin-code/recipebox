@@ -269,14 +269,14 @@ def retrieve_ranked_recipes(
     if positive_query:
         expanded_queries.extend(expand_query(scoring_query))
 
+    query_embeddings = client.embeddings.create(
+        model=EMBEDDING_MODEL,
+        input=expanded_queries,
+    ).data
     all_scores = []
 
-    for q in expanded_queries:
-        q_emb = client.embeddings.create(
-            model=EMBEDDING_MODEL,
-            input=q,
-        ).data[0].embedding
-
+    for query_embedding in query_embeddings:
+        q_emb = query_embedding.embedding
         for record in recipe_embeddings:
             score = cosine_similarity(q_emb, record["embedding"])
             all_scores.append((score, record))
