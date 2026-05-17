@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from recipe_config import dataset_path
+from recipe_config import READER_EMAILS, WRITER_EMAILS, dataset_path
 from recipe_ingest import extract_recipe_metadata, ingest_uploaded_recipe
 from recipe_search import (
     answer_recipe_question,
@@ -63,6 +63,44 @@ DATASETS_KEY = tuple(
     )
     for dataset in DATASETS
 )
+
+
+def current_user_email():
+    """Return the logged-in email normalized for allowlist checks."""
+    if not st.user.is_logged_in:
+        return ""
+    return str(getattr(st.user, "email", "") or "").strip().lower()
+
+
+def require_authenticated_reader():
+    """Require login and reader access before showing private cookbook data."""
+    if not st.user.is_logged_in:
+        st.title("RecipeBox")
+        st.write("Sign in to open the private cookbook.")
+        if st.button("Sign in with Google"):
+            st.login("google")
+        st.stop()
+
+    email = current_user_email()
+    if email not in READER_EMAILS:
+        st.error("This Google account does not have access to RecipeBox.")
+        if st.button("Log out"):
+            st.logout()
+        st.stop()
+
+    return email
+
+
+def is_writer(email):
+    """Return whether this approved reader may change shared cookbook data."""
+    return email in WRITER_EMAILS
+
+
+def require_writer(email):
+    """Stop a write action unless the current reader is an approved writer."""
+    if not is_writer(email):
+        st.error("Your account has read-only access.")
+        st.stop()
 
 
 def add_page_styles():
@@ -247,7 +285,7 @@ def order_matches_like_recommendations(recommendation, ranked_matches):
     return pd.DataFrame(ordered_rows)
 
 
-def render_recipe_card(row, key_prefix="recipe"):
+def render_recipe_card(row, key_prefix="recipe", can_write=False):
     """Render one browsable recipe card with existing expanders/actions."""
     with st.container(border=True):
         title_col, tag_col = st.columns([0.75, 0.25])
@@ -312,6 +350,10 @@ def render_recipe_card(row, key_prefix="recipe"):
                     st.warning("Recipe text not found.")
 
         with st.expander("Rate / personal notes"):
+            if not can_write:
+                st.info("Read-only account: ratings and personal notes are unavailable.")
+                return
+
             rating = st.radio(
                 "Rating",
                 options=[1, 2, 3, 4, 5],
@@ -534,7 +576,7 @@ def render_recommendation_tab(df):
         )
 
 
-def render_browse_tab(df, favorites_only):
+def render_browse_tab(df, favorites_only, can_write=False):
     """Render searchable recipe browser."""
     search = st.text_input(
         "Search recipes",
@@ -581,10 +623,10 @@ def render_browse_tab(df, favorites_only):
         st.caption(f"Showing the first {max_cards} cards. Search more specifically to narrow results.")
 
     for _, row in filtered.head(max_cards).iterrows():
-        render_recipe_card(row, key_prefix="browse")
+        render_recipe_card(row, key_prefix="browse", can_write=can_write)
 
 
-def render_favorites_tab(df):
+def render_favorites_tab(df, can_write=False):
     """Render favorite recipes without changing rating/favorite logic."""
     favorites = df[df["favorite"]].sort_values("title")
 
@@ -603,10 +645,10 @@ def render_favorites_tab(df):
 
     st.write(f"Showing **{min(len(favorites), max_cards)}** of **{len(favorites)}** favorites.")
     for _, row in favorites.head(max_cards).iterrows():
-        render_recipe_card(row, key_prefix="favorite")
+        render_recipe_card(row, key_prefix="favorite", can_write=can_write)
 
 
-def render_create_tab(df):
+def render_create_tab(df, email):
     """Render AI recipe creation grounded in selected saved recipes."""
     st.subheader("Create from your saved cookbook")
     st.caption(
@@ -758,6 +800,7 @@ def render_create_tab(df):
         st.markdown(generated_text)
 
         if st.button("Save generated recipe"):
+            require_writer(email)
             source_hint = desired_mood_or_context or ingredients_on_hand or "generated_recipe"
             with st.spinner("Saving generated recipe and extracting metadata..."):
                 txt_path, json_path = save_generated_recipe(generated_text, source_hint)
@@ -775,7 +818,7 @@ def render_create_tab(df):
             )
 
 
-def render_add_recipe_tab():
+def render_add_recipe_tab(email):
     """Render upload/OCR workflow."""
     st.subheader("Add a recipe")
     st.caption("Upload a clear photo from your phone or browser. OCR and metadata extraction may take a moment.")
@@ -790,6 +833,7 @@ def render_add_recipe_tab():
         st.write(f"Ready to add: **{uploaded_image.name}**")
 
         if st.button("OCR and add recipe"):
+            require_writer(email)
             image_bytes = uploaded_image.getvalue()
             image_name = uploaded_image.name
 
@@ -804,6 +848,8 @@ def render_add_recipe_tab():
 
 
 add_page_styles()
+user_email = require_authenticated_reader()
+can_write = is_writer(user_email)
 
 if "browser_search" not in st.session_state:
     # Browser filtering is independent from global recommendation form state.
@@ -812,6 +858,9 @@ if "browser_search" not in st.session_state:
 st.sidebar.header("Filters")
 favorites_only = st.sidebar.checkbox("Favorites only", value=False)
 show_hidden = st.sidebar.checkbox("Show continuation/partial pages", value=False)
+st.sidebar.caption(f"Signed in as {user_email}")
+if st.sidebar.button("Log out"):
+    st.logout()
 
 df = cached_recipe_dataframe(DATASETS_KEY)
 
@@ -821,6 +870,7 @@ if not show_hidden:
 st.sidebar.header("Search index")
 
 if st.session_state.pop("refresh_search_index_after_upload", False):
+    require_writer(user_email)
     cached_recipe_dataframe.clear()
     df = cached_recipe_dataframe(DATASETS_KEY)
     with st.sidebar.status("Refreshing search index...", expanded=False):
@@ -831,7 +881,7 @@ if st.session_state.pop("refresh_search_index_after_upload", False):
         f"{stats['reused']} reused, {stats['generated']} generated."
     )
 
-if st.sidebar.button("Refresh search index"):
+if can_write and st.sidebar.button("Refresh search index"):
     with st.sidebar.status("Refreshing search index...", expanded=False):
         stats = refresh_recipe_embedding_cache(df, force=False)
         cached_ranked_recipes.clear()
@@ -845,7 +895,8 @@ if st.sidebar.button("Refresh search index"):
 with st.sidebar.expander("Rebuild search index from scratch"):
     st.warning("This regenerates every recipe embedding and may cost more.")
     confirm_rebuild = st.checkbox("I understand", key="confirm_rebuild_search_index")
-    if st.button("Rebuild search index", disabled=not confirm_rebuild):
+    if st.button("Rebuild search index", disabled=not (confirm_rebuild and can_write)):
+        require_writer(user_email)
         with st.status("Rebuilding search index...", expanded=False):
             stats = refresh_recipe_embedding_cache(df, force=True)
             cached_ranked_recipes.clear()
@@ -899,10 +950,13 @@ section = st.radio(
 if section == "Ask Cookbook":
     render_recommendation_tab(df)
 elif section == "Browse":
-    render_browse_tab(df, favorites_only)
+    render_browse_tab(df, favorites_only, can_write=can_write)
 elif section == "Create":
-    render_create_tab(df)
+    render_create_tab(df, user_email)
 elif section == "Favorites":
-    render_favorites_tab(df)
+    render_favorites_tab(df, can_write=can_write)
 else:
-    render_add_recipe_tab()
+    if can_write:
+        render_add_recipe_tab(user_email)
+    else:
+        st.info("Your account has read-only access.")
